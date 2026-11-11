@@ -1,0 +1,231 @@
+﻿@page "/"
+@using System.Text.Json
+@inject HttpClient Http
+
+<PageTitle>Personagens de Naruto</PageTitle>
+
+<h1>Personagens de Naruto</h1>
+
+<div class="row mb-3">
+    <div class="col-md-5">
+        <input class="form-control" @bind="busca" placeholder="Ex: Naruto" />
+    </div>
+    <div class="col-md-4">
+        <button class="btn btn-primary" @onclick="Buscar">Buscar</button>
+        <button class="btn btn-secondary" @onclick="MostrarTodos">Mostrar todos</button>
+    </div>
+</div>
+
+@if (carregando == true)
+{
+    <p>Carregando... (na primeira vez a API pode demorar até 1 minuto para acordar)</p>
+}
+
+@if (erro != "")
+{
+    <p style="color: red;">@erro</p>
+}
+
+<div class="row">
+    @foreach (JsonElement p in personagens)
+    {
+        <div class="col-md-4 mb-3">
+            <div class="card p-3 h-100">
+                @if (PegarImagem(p) != "")
+                {
+                    <img src="@PegarImagem(p)" width="120" class="mb-2" />
+                }
+                <h4>@PegarNome(p)</h4>
+                <p><b>Clã / Afiliação:</b> @PegarCla(p)</p>
+                <p><b>Rank:</b> @PegarRank(p)</p>
+                <p><b>Jutsus:</b></p>
+                <div style="max-height: 150px; overflow-y: auto;">
+                    <ul>
+                        @foreach (string jutsu in PegarJutsus(p))
+                        {
+                            <li>@jutsu</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string urlBase = "https://dattebayo-api.onrender.com/characters";
+    private string busca = "";
+    private string erro = "";
+    private bool carregando = false;
+    private List<JsonElement> personagens = new List<JsonElement>();
+
+    // quando a pagina abre ja lista os personagens
+    protected override async Task OnInitializedAsync()
+    {
+        await Carregar(urlBase);
+    }
+
+    private async Task MostrarTodos()
+    {
+        busca = "";
+        await Carregar(urlBase);
+    }
+
+    private async Task Buscar()
+    {
+        if (busca == "")
+        {
+            await MostrarTodos();
+            return;
+        }
+
+        await Carregar(urlBase + "?name=" + Uri.EscapeDataString(busca));
+
+        // filtra pelo nome digitado
+        List<JsonElement> filtrados = new List<JsonElement>();
+        foreach (JsonElement p in personagens)
+        {
+            if (PegarNome(p).ToLower().Contains(busca.ToLower()))
+            {
+                filtrados.Add(p);
+            }
+        }
+        personagens = filtrados;
+
+        if (personagens.Count == 0 && erro == "")
+        {
+            erro = "Nenhum personagem encontrado.";
+        }
+    }
+
+    private async Task Carregar(string url)
+    {
+        erro = "";
+        carregando = true;
+        personagens = new List<JsonElement>();
+
+        try
+        {
+            string resposta = await Http.GetStringAsync(url);
+            JsonDocument json = JsonDocument.Parse(resposta);
+            JsonElement raiz = json.RootElement;
+
+            // a lista vem dentro de "characters"
+            if (raiz.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement p in raiz.EnumerateArray())
+                {
+                    personagens.Add(p);
+                }
+            }
+            else if (raiz.TryGetProperty("characters", out JsonElement lista))
+            {
+                foreach (JsonElement p in lista.EnumerateArray())
+                {
+                    personagens.Add(p);
+                }
+            }
+            else
+            {
+                personagens.Add(raiz);
+            }
+        }
+        catch
+        {
+            erro = "Não foi possível carregar os personagens. Tente de novo.";
+        }
+
+        carregando = false;
+    }
+
+    // transforma qualquer valor do json em texto (texto, lista ou objeto)
+    private string Texto(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.String)
+        {
+            return e.GetString() ?? "";
+        }
+
+        List<string> partes = new List<string>();
+
+        if (e.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in e.EnumerateArray())
+            {
+                partes.Add(Texto(item));
+            }
+            return string.Join(", ", partes);
+        }
+
+        if (e.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty prop in e.EnumerateObject())
+            {
+                partes.Add(prop.Name + ": " + Texto(prop.Value));
+            }
+            return string.Join(" | ", partes);
+        }
+
+        return e.ToString();
+    }
+
+    private string PegarNome(JsonElement p)
+    {
+        if (p.TryGetProperty("name", out JsonElement nome))
+        {
+            return Texto(nome);
+        }
+        return "";
+    }
+
+    private string PegarImagem(JsonElement p)
+    {
+        if (p.TryGetProperty("images", out JsonElement imagens) && imagens.ValueKind == JsonValueKind.Array && imagens.GetArrayLength() > 0)
+        {
+            return Texto(imagens[0]);
+        }
+        return "";
+    }
+
+    private string PegarCla(JsonElement p)
+    {
+        if (p.TryGetProperty("personal", out JsonElement pessoal))
+        {
+            if (pessoal.TryGetProperty("clan", out JsonElement cla))
+            {
+                return Texto(cla);
+            }
+            if (pessoal.TryGetProperty("affiliation", out JsonElement afiliacao))
+            {
+                return Texto(afiliacao);
+            }
+        }
+        return "Não informado";
+    }
+
+    private string PegarRank(JsonElement p)
+    {
+        if (p.TryGetProperty("rank", out JsonElement rank) && rank.TryGetProperty("ninjaRank", out JsonElement ninjaRank))
+        {
+            return Texto(ninjaRank);
+        }
+        return "Não informado";
+    }
+
+    private List<string> PegarJutsus(JsonElement p)
+    {
+        List<string> jutsus = new List<string>();
+        if (p.TryGetProperty("jutsu", out JsonElement lista) && lista.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement j in lista.EnumerateArray())
+            {
+                jutsus.Add(Texto(j));
+            }
+        }
+        if (jutsus.Count == 0)
+        {
+            jutsus.Add("Nenhum jutsu informado");
+        }
+        return jutsus;
+    }
+}
